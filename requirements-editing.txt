@@ -1,0 +1,16 @@
+transformers>=4.50
+accelerate>=1.0
+huggingface_hub>=0.26
+av
+addict
+einops
+future
+scipy
+matplotlib
+scikit-image
+imageio
+imageio-ffmpeg
+pyyaml
+requests
+timm
+yapf
