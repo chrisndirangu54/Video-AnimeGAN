@@ -81,3 +81,23 @@ The first run downloads the selected AnimeGANv2 checkpoint through PyTorch Hub. 
 ## Attribution
 
 The pretrained cartoon generator is loaded from the open-source `bryandlee/animegan2-pytorch` implementation of AnimeGANv2. Review upstream licenses before commercial deployment.
+
+
+## Android UI (Gradle + Jetpack Compose)
+
+A native Android client lives in `android-ui/`.
+
+### Start the backend
+
+```bash
+pip install -r requirements.txt
+uvicorn backend_api:app --host 0.0.0.0 --port 8000
+```
+
+### Run the Android app
+
+Open `android-ui/` in Android Studio and run the `app` configuration.
+
+The Android emulator uses `http://10.0.2.2:8000/` to reach a backend running on the development machine. For a physical device or hosted GPU, set `API_BASE_URL` in `android-ui/app/build.gradle.kts` to the appropriate HTTPS endpoint.
+
+The UI supports video selection, AnimeGANv2 style selection, upload/processing state, error feedback, and output preview using Media3/ExoPlayer.
