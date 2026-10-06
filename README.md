@@ -1,26 +1,64 @@
 # Video-AnimeGAN
 
-A Colab-friendly video stylization pipeline using **real pretrained AnimeGANv2 weights** rather than randomly initialized generator/ConvLSTM blocks.
+A Colab-friendly video stylization and AI-video workspace built around **real pretrained AnimeGANv2 weights**.
 
-## What changed
+## Current architecture
 
-- Uses pretrained AnimeGANv2 weights via `torch.hub`
-- Removes the untrained ConvLSTM path
-- Preserves source aspect ratio and original output dimensions
-- Correctly maps AnimeGAN output from `[-1, 1]` back to 8-bit video
-- Adds CUDA automatic mixed precision
-- Adds optical-flow temporal smoothing without requiring training
-- Preserves/remuxes original audio with FFmpeg
-- Adds CPU/CUDA/MPS device selection
-- Adds input validation and a reproducible dependency file
-- Adds a browser-based **Gradio UI** for upload, settings, preview and download
+- **Gradio web UI** as the single user interface
+- pretrained AnimeGANv2 inference through `torch.hub`
+- aspect-ratio-preserving video processing
+- correct AnimeGAN `[-1, 1]` output conversion
+- CUDA automatic mixed precision
+- optical-flow temporal smoothing without untrained temporal networks
+- original-audio preservation with FFmpeg
+- CPU/CUDA/MPS device selection
 
-## Supported pretrained styles
+The previous Android client and its dedicated FastAPI bridge have been removed so the repository stays focused on a lightweight Colab/browser workflow.
+
+## Gradio tabs
+
+### Anime Conversion — operational
+
+Upload a normal video and convert it into an anime/cartoon-styled video using a pretrained AnimeGANv2 checkpoint.
+
+Available styles:
 
 - `paprika`
 - `celeba_distill`
 - `face_paint_512_v1`
 - `face_paint_512_v2`
+
+Controls include inference resolution, optical-flow temporal smoothing and CUDA mixed precision.
+
+### Object Removal — UI ready
+
+Intended backend:
+
+`text prompt → Grounded SAM 2 tracking → ProPainter video inpainting`
+
+### Recolor Object — UI ready
+
+Intended backend:
+
+`text prompt → Grounded SAM 2 mask → LAB/HSV recoloring → temporal compositing`
+
+### Replace Video Text — UI ready
+
+Intended backend:
+
+`PaddleOCR → tracked text mask → ProPainter → perspective-aware replacement rendering`
+
+### B&W Colorization — UI ready
+
+Intended backend:
+
+`DeOldify-compatible colorizer → temporal post-processing → FFmpeg audio remux`
+
+### Generative Anime — experimental UI
+
+This is reserved for a heavier video-diffusion backend that can reinterpret characters, backgrounds, clothing, lighting and visual style rather than only applying fast AnimeGAN style transfer.
+
+The non-AnimeGAN tabs deliberately report their backend status instead of silently falling back to low-quality fake edits.
 
 ## Google Colab
 
@@ -31,15 +69,15 @@ A Colab-friendly video stylization pipeline using **real pretrained AnimeGANv2 w
 !apt-get -qq update && apt-get -qq install -y ffmpeg
 ```
 
-### Launch the Gradio UI
+Launch the UI:
 
 ```bash
 !python app.py --share
 ```
 
-Open the Gradio link, upload a video, choose a style, adjust resolution/temporal smoothing, then click **Create Anime Video**.
+Open the generated Gradio URL.
 
-### CLI
+## CLI anime conversion
 
 ```bash
 !python video_editor.py input.mp4 output.mp4 --style paprika --device auto
@@ -71,52 +109,10 @@ process_video(
 )
 ```
 
-## Gradio UI features
-
-- drag-and-drop/upload video
-- AnimeGANv2 style selector
-- adjustable GPU inference resolution
-- adjustable optical-flow temporal smoothing
-- CUDA mixed-precision toggle
-- in-browser video preview
-- downloadable MP4 output
-- queued single-job execution to avoid accidental GPU memory contention
-
-## Advanced editing roadmap
-
-This repository now has a clean inference foundation for adding specialized pretrained editors without retraining the cartoon model:
-
-- **Object selection/tracking:** Grounded SAM 2
-- **Object removal / video inpainting:** ProPainter
-- **Object recoloring:** SAM 2 masks + deterministic HSV/LAB transforms
-- **Text detection/replacement:** PaddleOCR + tracked masks + ProPainter + OpenCV/Pillow rendering
-- **Historical B&W colorization:** DeOldify
-
-These should remain separate modules because they solve different vision tasks and have different model/license/runtime requirements.
-
 ## Notes
 
-The first run downloads the selected AnimeGANv2 checkpoint through PyTorch Hub. For long or 4K footage, use `--max-side 720` or `--max-side 960` in Colab to reduce GPU memory use.
+The first AnimeGAN run downloads the selected checkpoint through PyTorch Hub. For long or 4K footage, use `--max-side 720` or `--max-side 960` in Colab to reduce GPU-memory use.
 
 ## Attribution
 
-The pretrained cartoon generator is loaded from the open-source `bryandlee/animegan2-pytorch` implementation of AnimeGANv2. Review upstream licenses before commercial deployment.
-
-## Android UI (Gradle + Jetpack Compose)
-
-A native Android client lives in `android-ui/`.
-
-### Start the backend
-
-```bash
-pip install -r requirements.txt
-uvicorn backend_api:app --host 0.0.0.0 --port 8000
-```
-
-### Run the Android app
-
-Open `android-ui/` in Android Studio and run the `app` configuration.
-
-The Android emulator uses `http://10.0.2.2:8000/` to reach a backend running on the development machine. For a physical device or hosted GPU, set `API_BASE_URL` in `android-ui/app/build.gradle.kts` to the appropriate HTTPS endpoint.
-
-The UI supports video selection, AnimeGANv2 style selection, upload/processing state, error feedback, and output preview using Media3/ExoPlayer.
+The pretrained cartoon generator is loaded from the open-source `bryandlee/animegan2-pytorch` implementation of AnimeGANv2. Review upstream model and code licenses before commercial deployment.
