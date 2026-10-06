@@ -1,118 +1,97 @@
 # Video-AnimeGAN
 
-A Colab-friendly video stylization and AI-video workspace built around **real pretrained AnimeGANv2 weights**.
+A Colab-friendly video stylization and AI-video editing workspace built around pretrained open-source models.
 
-## Current architecture
+## Operational features
 
-- **Gradio web UI** as the single user interface
-- pretrained AnimeGANv2 inference through `torch.hub`
-- aspect-ratio-preserving video processing
-- correct AnimeGAN `[-1, 1]` output conversion
-- CUDA automatic mixed precision
-- optical-flow temporal smoothing without untrained temporal networks
-- original-audio preservation with FFmpeg
-- CPU/CUDA/MPS device selection
+### Anime Conversion
 
-The previous Android client and its dedicated FastAPI bridge have been removed so the repository stays focused on a lightweight Colab/browser workflow.
+Uses pretrained AnimeGANv2 weights with aspect-ratio-preserving inference, CUDA mixed precision, optical-flow temporal smoothing, original-audio preservation, and browser preview/download through Gradio.
 
-## Gradio tabs
+### Grounded Object Removal
 
-### Anime Conversion — operational
+The Object Removal tab is wired to a real three-stage pipeline:
 
-Upload a normal video and convert it into an anime/cartoon-styled video using a pretrained AnimeGANv2 checkpoint.
+    natural-language target
+            ↓
+    Grounding DINO
+    open-vocabulary detection
+            ↓
+    SAM 2
+    video mask propagation/tracking
+            ↓
+    ProPainter
+    temporal video inpainting
+            ↓
+    FFmpeg
+    original audio remux
 
-Available styles:
+The detector samples frames until it finds the requested object. SAM 2 then propagates that object mask forward and backward through the clip, and ProPainter reconstructs the selected region across time.
 
-- `paprika`
-- `celeba_distill`
-- `face_paint_512_v1`
-- `face_paint_512_v2`
+Example prompts:
 
-Controls include inference resolution, optical-flow temporal smoothing and CUDA mixed precision.
-
-### Object Removal — UI ready
-
-Intended backend:
-
-`text prompt → Grounded SAM 2 tracking → ProPainter video inpainting`
-
-### Recolor Object — UI ready
-
-Intended backend:
-
-`text prompt → Grounded SAM 2 mask → LAB/HSV recoloring → temporal compositing`
-
-### Replace Video Text — UI ready
-
-Intended backend:
-
-`PaddleOCR → tracked text mask → ProPainter → perspective-aware replacement rendering`
-
-### B&W Colorization — UI ready
-
-Intended backend:
-
-`DeOldify-compatible colorizer → temporal post-processing → FFmpeg audio remux`
-
-### Generative Anime — experimental UI
-
-This is reserved for a heavier video-diffusion backend that can reinterpret characters, backgrounds, clothing, lighting and visual style rather than only applying fast AnimeGAN style transfer.
-
-The non-AnimeGAN tabs deliberately report their backend status instead of silently falling back to low-quality fake edits.
+- person in the background
+- bottle on the table
+- red car
+- microphone
 
 ## Google Colab
 
-```bash
-!git clone https://github.com/chrisndirangu54/Video-AnimeGAN.git
-%cd Video-AnimeGAN
-!pip install -r requirements.txt
-!apt-get -qq update && apt-get -qq install -y ffmpeg
-```
+Clone:
 
-Launch the UI:
+    !git clone https://github.com/chrisndirangu54/Video-AnimeGAN.git
+    %cd Video-AnimeGAN
 
-```bash
-!python app.py --share
-```
+Install the full editing stack:
 
-Open the generated Gradio URL.
+    !bash setup_editing_models.sh
+    !apt-get -qq update && apt-get -qq install -y ffmpeg
 
-## CLI anime conversion
+Launch Gradio:
 
-```bash
-!python video_editor.py input.mp4 output.mp4 --style paprika --device auto
-```
+    !python app.py --share
 
-For lower VRAM usage:
+The first object-removal run downloads Grounding DINO and SAM 2 weights. ProPainter downloads its pretrained weights automatically on first inference.
 
-```bash
-!python video_editor.py input.mp4 output.mp4 --style paprika --max-side 720
-```
+## Gradio tabs
 
-Disable temporal smoothing:
+- Anime Conversion — operational
+- Object Removal — operational with Grounding DINO + SAM 2 + ProPainter
+- Recolor Object — UI ready; intended to reuse SAM 2 masks
+- Replace Video Text — UI ready; intended to reuse masks + ProPainter
+- B&W Colorization — UI ready
+- Generative Anime — experimental UI
 
-```bash
-!python video_editor.py input.mp4 output.mp4 --temporal-strength 0
-```
+## Object-removal controls
+
+- Grounding box threshold: lower it if the target is missed; raise it to reject weak detections.
+- Grounding text threshold: controls prompt-region matching confidence.
+- Detection scan stride: controls how frequently frames are searched for a grounding frame.
+- Mask dilation: expands the removed region around object boundaries.
+- ProPainter processing scale: lower values reduce VRAM demand.
+- FP16: recommended on NVIDIA Colab GPUs.
 
 ## Python API
 
-```python
-from video_editor import process_video
+    from object_removal import remove_object_from_video
 
-process_video(
-    input_video="input.mp4",
-    output_video="output.mp4",
-    style="paprika",
-    max_side=1280,
-    temporal_strength=0.18,
-)
-```
+    remove_object_from_video(
+        input_video="input.mp4",
+        output_video="removed.mp4",
+        prompt="person in the background",
+        box_threshold=0.35,
+        text_threshold=0.25,
+        scan_stride=30,
+        mask_dilation=6,
+        resize_ratio=1.0,
+    )
 
-## Notes
+## Design choices
 
-The first AnimeGAN run downloads the selected checkpoint through PyTorch Hub. For long or 4K footage, use `--max-side 720` or `--max-side 960` in Colab to reduce GPU-memory use.
+Grounding DINO is loaded through Hugging Face Transformers, which avoids compiling the original Grounding DINO custom deformable-attention extension. SAM 2 is installed from Meta's official repository and performs video mask propagation. ProPainter remains the temporal inpainting stage instead of performing independent per-frame fills.
 
-## Attribution
+For long or high-resolution videos on Colab, lower the ProPainter scale to about 0.5–0.75 to reduce GPU-memory pressure.
 
-The pretrained cartoon generator is loaded from the open-source `bryandlee/animegan2-pytorch` implementation of AnimeGANv2. Review upstream model and code licenses before commercial deployment.
+## Attribution and licensing
+
+This project orchestrates third-party pretrained models. Review the upstream code and model licenses for AnimeGANv2, Grounding DINO, SAM 2, and ProPainter before commercial deployment.
