@@ -52,6 +52,10 @@ def remove_object_ui(
     mask_dilation,
     resize_ratio,
     fp16,
+    roi_enabled,
+    roi_padding,
+    roi_target_long_side,
+    feather,
     progress=gr.Progress(track_tqdm=True),
 ):
     src = _require_video(input_video)
@@ -71,6 +75,10 @@ def remove_object_ui(
             mask_dilation=int(mask_dilation),
             resize_ratio=float(resize_ratio),
             fp16=bool(fp16),
+            roi_enabled=bool(roi_enabled),
+            roi_padding=int(roi_padding),
+            roi_target_long_side=int(roi_target_long_side),
+            feather=int(feather),
         )
     except Exception as exc:
         raise gr.Error(f"Object removal failed: {exc}") from exc
@@ -134,8 +142,12 @@ with gr.Blocks(title="Video AnimeGAN Studio", theme=gr.themes.Soft()) as demo:
                     text_threshold = gr.Slider(0.1, 0.8, value=0.25, step=0.01, label="Grounding text threshold")
                     scan_stride = gr.Slider(1, 120, value=30, step=1, label="Detection scan stride (frames)")
                     mask_dilation = gr.Slider(0, 20, value=6, step=1, label="Mask dilation")
-                    resize_ratio = gr.Slider(0.25, 1.0, value=1.0, step=0.05, label="ProPainter processing scale")
+                    resize_ratio = gr.Slider(0.25, 1.0, value=1.0, step=0.05, label="Maximum ProPainter scale")
                     removal_fp16 = gr.Checkbox(value=True, label="Use ProPainter FP16")
+                    roi_enabled = gr.Checkbox(value=True, label="Use ROI acceleration")
+                    roi_padding = gr.Slider(16, 256, value=96, step=16, label="ROI padding (pixels)")
+                    roi_target_long_side = gr.Slider(384, 1280, value=768, step=64, label="ROI target long side")
+                    feather = gr.Slider(0, 21, value=7, step=1, label="Composite feather")
                 removal_run = gr.Button("Remove Object", variant="primary")
             with gr.Column():
                 removal_output = gr.Video(label="Object-removed output")
@@ -152,6 +164,10 @@ with gr.Blocks(title="Video AnimeGAN Studio", theme=gr.themes.Soft()) as demo:
                 mask_dilation,
                 resize_ratio,
                 removal_fp16,
+                roi_enabled,
+                roi_padding,
+                roi_target_long_side,
+                feather,
             ],
             [removal_output, removal_download],
             concurrency_limit=1,
