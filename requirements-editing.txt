@@ -8,6 +8,7 @@ future
 scipy
 matplotlib
 scikit-image
+imageio
 imageio-ffmpeg
 pyyaml
 requests
