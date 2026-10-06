@@ -13,6 +13,7 @@ A Colab-friendly video stylization pipeline using **real pretrained AnimeGANv2 w
 - Preserves/remuxes original audio with FFmpeg
 - Adds CPU/CUDA/MPS device selection
 - Adds input validation and a reproducible dependency file
+- Adds a browser-based **Gradio UI** for upload, settings, preview and download
 
 ## Supported pretrained styles
 
@@ -30,7 +31,15 @@ A Colab-friendly video stylization pipeline using **real pretrained AnimeGANv2 w
 !apt-get -qq update && apt-get -qq install -y ffmpeg
 ```
 
-Upload a video to Colab, then run:
+### Launch the Gradio UI
+
+```bash
+!python app.py --share
+```
+
+Open the Gradio link, upload a video, choose a style, adjust resolution/temporal smoothing, then click **Create Anime Video**.
+
+### CLI
 
 ```bash
 !python video_editor.py input.mp4 output.mp4 --style paprika --device auto
@@ -62,6 +71,17 @@ process_video(
 )
 ```
 
+## Gradio UI features
+
+- drag-and-drop/upload video
+- AnimeGANv2 style selector
+- adjustable GPU inference resolution
+- adjustable optical-flow temporal smoothing
+- CUDA mixed-precision toggle
+- in-browser video preview
+- downloadable MP4 output
+- queued single-job execution to avoid accidental GPU memory contention
+
 ## Advanced editing roadmap
 
 This repository now has a clean inference foundation for adding specialized pretrained editors without retraining the cartoon model:
@@ -81,7 +101,6 @@ The first run downloads the selected AnimeGANv2 checkpoint through PyTorch Hub. 
 ## Attribution
 
 The pretrained cartoon generator is loaded from the open-source `bryandlee/animegan2-pytorch` implementation of AnimeGANv2. Review upstream licenses before commercial deployment.
-
 
 ## Android UI (Gradle + Jetpack Compose)
 
