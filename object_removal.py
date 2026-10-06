@@ -178,7 +178,9 @@ def _build_masks_with_sam2(
         union_masks[int(frame_idx)] = merged
 
     if torch.cuda.is_available():
-        amp_context = torch.autocast("cuda", dtype=torch.bfloat16)
+        major, _ = torch.cuda.get_device_capability()
+        amp_dtype = torch.bfloat16 if major >= 8 else torch.float16
+        amp_context = torch.autocast("cuda", dtype=amp_dtype)
     else:
         from contextlib import nullcontext
         amp_context = nullcontext()
