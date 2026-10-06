@@ -17,6 +17,9 @@ GROUNDING_MODEL_ID = os.environ.get("GROUNDING_DINO_MODEL_ID", "IDEA-Research/gr
 SAM2_MODEL_ID = os.environ.get("SAM2_MODEL_ID", "facebook/sam2-hiera-large")
 PROPAINTER_DIR = Path(os.environ.get("PROPAINTER_DIR", "third_party/ProPainter"))
 
+_GROUNDING_CACHE = None
+_SAM2_CACHE = None
+
 
 def _require_editing_dependencies() -> None:
     missing = []
@@ -66,13 +69,18 @@ def _extract_frames(video_path: Path, frame_dir: Path) -> int:
 
 
 def _load_grounding_dino():
+    global _GROUNDING_CACHE
+    if _GROUNDING_CACHE is not None:
+        return _GROUNDING_CACHE
+
     from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 
     device = _device()
     processor = AutoProcessor.from_pretrained(GROUNDING_MODEL_ID)
     model = AutoModelForZeroShotObjectDetection.from_pretrained(GROUNDING_MODEL_ID).to(device)
     model.eval()
-    return processor, model, device
+    _GROUNDING_CACHE = (processor, model, device)
+    return _GROUNDING_CACHE
 
 
 def _detect_boxes(
@@ -160,9 +168,12 @@ def _build_masks_with_sam2(
     boxes: np.ndarray,
     mask_dir: Path,
 ) -> None:
+    global _SAM2_CACHE
     from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-    predictor = SAM2VideoPredictor.from_pretrained(SAM2_MODEL_ID)
+    if _SAM2_CACHE is None:
+        _SAM2_CACHE = SAM2VideoPredictor.from_pretrained(SAM2_MODEL_ID)
+    predictor = _SAM2_CACHE
     state = predictor.init_state(
         str(frame_dir),
         offload_video_to_cpu=True,
@@ -214,6 +225,150 @@ def _build_masks_with_sam2(
     for idx in range(frame_count):
         mask = union_masks.get(idx, np.zeros((h, w), dtype=np.uint8))
         cv2.imwrite(str(mask_dir / f"{idx:06d}.png"), mask)
+
+
+
+def _compute_global_roi(mask_dir: Path, frame_count: int, padding: int, width: int, height: int):
+    xs, ys, xe, ye = [], [], [], []
+    for idx in range(frame_count):
+        mask = cv2.imread(str(mask_dir / f"{idx:06d}.png"), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            continue
+        points = cv2.findNonZero(mask)
+        if points is None:
+            continue
+        x, y, w, h = cv2.boundingRect(points)
+        xs.append(x)
+        ys.append(y)
+        xe.append(x + w)
+        ye.append(y + h)
+
+    if not xs:
+        return 0, 0, width, height
+
+    x1 = max(0, min(xs) - padding)
+    y1 = max(0, min(ys) - padding)
+    x2 = min(width, max(xe) + padding)
+    y2 = min(height, max(ye) + padding)
+
+    # Align ROI dimensions for common encoder/model constraints.
+    roi_w = x2 - x1
+    roi_h = y2 - y1
+    x2 = min(width, x1 + max(32, ((roi_w + 31) // 32) * 32))
+    y2 = min(height, y1 + max(32, ((roi_h + 31) // 32) * 32))
+    return x1, y1, x2, y2
+
+
+def _write_cropped_video_and_masks(
+    source: Path,
+    mask_dir: Path,
+    crop_video: Path,
+    crop_mask_dir: Path,
+    roi,
+):
+    x1, y1, x2, y2 = roi
+    cap = cv2.VideoCapture(str(source))
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open source video: {source}")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    writer = cv2.VideoWriter(
+        str(crop_video),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (x2 - x1, y2 - y1),
+    )
+    if not writer.isOpened():
+        cap.release()
+        raise RuntimeError("Could not create cropped ROI video.")
+
+    idx = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        crop = frame[y1:y2, x1:x2]
+        writer.write(crop)
+
+        mask = cv2.imread(str(mask_dir / f"{idx:06d}.png"), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        cv2.imwrite(str(crop_mask_dir / f"{idx:06d}.png"), mask[y1:y2, x1:x2])
+        idx += 1
+
+    cap.release()
+    writer.release()
+
+
+def _composite_roi_back(
+    source: Path,
+    inpainted_crop: Path,
+    mask_dir: Path,
+    roi,
+    output_video: Path,
+    feather: int = 7,
+):
+    x1, y1, x2, y2 = roi
+    source_cap = cv2.VideoCapture(str(source))
+    crop_cap = cv2.VideoCapture(str(inpainted_crop))
+    if not source_cap.isOpened() or not crop_cap.isOpened():
+        raise RuntimeError("Could not open source or inpainted ROI for compositing.")
+
+    fps = source_cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width = int(source_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(source_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    writer = cv2.VideoWriter(
+        str(output_video),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (width, height),
+    )
+    if not writer.isOpened():
+        source_cap.release()
+        crop_cap.release()
+        raise RuntimeError("Could not create composited output video.")
+
+    idx = 0
+    kernel = max(1, int(feather) * 2 + 1)
+    while True:
+        ok_src, frame = source_cap.read()
+        ok_crop, crop = crop_cap.read()
+        if not ok_src:
+            break
+        if not ok_crop:
+            crop = frame[y1:y2, x1:x2].copy()
+
+        mask = cv2.imread(str(mask_dir / f"{idx:06d}.png"), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            mask_roi = np.zeros((y2 - y1, x2 - x1), dtype=np.uint8)
+        else:
+            mask_roi = mask[y1:y2, x1:x2]
+
+        if feather > 0:
+            alpha = cv2.GaussianBlur(mask_roi, (kernel, kernel), 0).astype(np.float32) / 255.0
+        else:
+            alpha = mask_roi.astype(np.float32) / 255.0
+        alpha = alpha[..., None]
+
+        base = frame[y1:y2, x1:x2].astype(np.float32)
+        filled = crop.astype(np.float32)
+        blended = filled * alpha + base * (1.0 - alpha)
+        frame[y1:y2, x1:x2] = np.clip(blended, 0, 255).astype(np.uint8)
+        writer.write(frame)
+        idx += 1
+
+    source_cap.release()
+    crop_cap.release()
+    writer.release()
+
+
+def _adaptive_resize_ratio(roi, target_long_side: int, user_ratio: float) -> float:
+    x1, y1, x2, y2 = roi
+    longest = max(x2 - x1, y2 - y1)
+    if longest <= 0:
+        return float(user_ratio)
+    auto_ratio = min(1.0, float(target_long_side) / float(longest))
+    return max(0.25, min(float(user_ratio), auto_ratio))
 
 
 def _run_propainter(
@@ -288,6 +443,10 @@ def remove_object_from_video(
     mask_dilation: int = 6,
     resize_ratio: float = 1.0,
     fp16: bool = True,
+    roi_enabled: bool = True,
+    roi_padding: int = 96,
+    roi_target_long_side: int = 768,
+    feather: int = 7,
 ) -> str:
     """Remove a text-described object using Grounding DINO + SAM 2 + ProPainter."""
     _require_editing_dependencies()
@@ -308,6 +467,10 @@ def remove_object_from_video(
         propainter_out.mkdir()
 
         frame_count = _extract_frames(source, frame_dir)
+        cap_meta = cv2.VideoCapture(str(source))
+        width = int(cap_meta.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap_meta.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap_meta.release()
 
         processor, detector, device = _load_grounding_dino()
         start_idx, boxes = _find_detection_frame(
@@ -322,7 +485,7 @@ def remove_object_from_video(
             scan_stride,
         )
 
-        del detector
+        # Keep Grounding DINO cached across Gradio jobs; avoid repeated checkpoint loads.
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -337,14 +500,52 @@ def remove_object_from_video(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        inpainted = _run_propainter(
-            source,
-            mask_dir,
-            propainter_out,
-            fp16,
-            mask_dilation,
-            resize_ratio,
-        )
-        _mux_audio(inpainted, source, target)
+        if roi_enabled:
+            roi = _compute_global_roi(mask_dir, frame_count, int(roi_padding), width, height)
+            crop_video = root / "roi.mp4"
+            crop_mask_dir = root / "roi_masks"
+            crop_mask_dir.mkdir()
+
+            _write_cropped_video_and_masks(
+                source,
+                mask_dir,
+                crop_video,
+                crop_mask_dir,
+                roi,
+            )
+
+            effective_ratio = _adaptive_resize_ratio(
+                roi,
+                int(roi_target_long_side),
+                float(resize_ratio),
+            )
+            inpainted_crop = _run_propainter(
+                crop_video,
+                crop_mask_dir,
+                propainter_out,
+                fp16,
+                mask_dilation,
+                effective_ratio,
+            )
+            composited = root / "composited.mp4"
+            _composite_roi_back(
+                source,
+                inpainted_crop,
+                mask_dir,
+                roi,
+                composited,
+                int(feather),
+            )
+            _mux_audio(composited, source, target)
+        else:
+            inpainted = _run_propainter(
+                source,
+                mask_dir,
+                propainter_out,
+                fp16,
+                mask_dilation,
+                resize_ratio,
+            )
+            _mux_audio(inpainted, source, target)
 
     return str(target)
