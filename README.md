@@ -95,3 +95,21 @@ For long or high-resolution videos on Colab, lower the ProPainter scale to about
 ## Attribution and licensing
 
 This project orchestrates third-party pretrained models. Review the upstream code and model licenses for AnimeGANv2, Grounding DINO, SAM 2, and ProPainter before commercial deployment.
+
+
+## Performance optimization
+
+Object removal now supports ROI-accelerated ProPainter inference. After SAM 2 finishes tracking, the pipeline computes a padded region that covers the target trajectory across the clip. ProPainter runs only on that crop instead of the full frame, after which the edited region is composited back into the untouched original-resolution frames with feathered mask blending.
+
+The pipeline also caches the loaded Grounding DINO detector and SAM 2 predictor within the Gradio process, reducing repeated model-startup cost between jobs.
+
+Recommended Colab T4 settings:
+
+- ROI acceleration: enabled
+- ROI padding: 64-128 px
+- ROI target long side: 640-768
+- maximum ProPainter scale: 0.75-1.0
+- FP16: enabled
+- composite feather: 5-9 px
+
+ROI acceleration helps most when the removed object occupies a relatively small part of the frame. If the object moves across most of the image, the crop can approach full-frame size and the speed advantage naturally decreases.
